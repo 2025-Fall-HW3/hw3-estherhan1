@@ -70,8 +70,50 @@ class MyPortfolio:
         """
         TODO: Complete Task 4 Below
         """
+        tradeable_assets = self.price.columns[self.price.columns != self.exclude]
+        prices = self.price[tradeable_assets]
         
+        # 2. 計算動能 (Momentum)
+        # 我們看過去 126 天 (約半年) 的累積漲幅
+        # 用來判斷哪些板塊現在最強
+        momentum = prices.pct_change(126)
         
+        # 3. 排名 (Ranking)
+        # rank(ascending=False) 代表漲最多的排第 1
+        ranks = momentum.rank(axis=1, ascending=False)
+        
+        # 4. 篩選 Top 4 強勢股
+        # 只有排名前 4 的板塊會被選中 (設為 1)，其他為 0
+        top_n = 4
+        signals = (ranks <= top_n).astype(float)
+        
+        # 5. 平均分配權重 (Equal Weight)
+        # 被選中的 4 檔各分 25%
+        # 為了防止分母為 0 (例如最開始幾天沒有動能數據)，我們用 sum + 1e-8
+        weights = signals.div(signals.sum(axis=1) + 1e-8, axis=0)
+        
+        # 6. 填補缺值 (剛開始 126 天沒有動能數據)
+        # 在沒有訊號時，預設平均持有所有資產 (Equal Weight All)
+        num_assets = len(tradeable_assets)
+        weights = weights.fillna(1.0 / num_assets)
+        
+        # 如果某天完全沒有訊號 (極少見)，也退回平均分配
+        mask = weights.sum(axis=1) == 0
+        weights.loc[mask] = 1.0 / num_assets
+        
+        # 7. 初始化權重表
+        self.portfolio_weights = pd.DataFrame(
+            0.0, index=self.price.index, columns=self.price.columns
+        )
+        
+        # 8. 避免前視偏差 (Look-ahead Bias) 與 填入
+        # 今天的訊號決定明天的權重，所以要 shift(1)
+        self.portfolio_weights[tradeable_assets] = weights.shift(1)
+        
+        # 9. 處理第一天的 NaN (shift 產生的) 和排除資產
+        self.portfolio_weights.fillna(0, inplace=True)
+        if self.exclude in self.portfolio_weights.columns:
+            self.portfolio_weights[self.exclude] = 0.0
         """
         TODO: Complete Task 4 Above
         """

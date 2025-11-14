@@ -63,6 +63,20 @@ class EqualWeightPortfolio:
         TODO: Complete Task 1 Below
         """
 
+        # If there are no assets (edge case), leave DataFrame as zeros
+        if len(assets) == 0:
+            return
+
+        # Equal weight across all non-excluded assets
+        weight = 1.0 / len(assets)
+
+        # Assign the same weight for every date for each asset
+        # Using .loc to broadcast the scalar across all rows and selected columns
+        self.portfolio_weights.loc[:, assets] = weight
+
+        # Ensure the excluded asset has zero weight
+        if self.exclude in self.portfolio_weights.columns:
+            self.portfolio_weights[self.exclude] = 0.0
         """
         TODO: Complete Task 1 Above
         """
@@ -114,8 +128,44 @@ class RiskParityPortfolio:
         TODO: Complete Task 2 Below
         """
 
+        # If there are no assets (edge case), leave DataFrame as zeros
+        if len(assets) == 0:
+            return
 
+        # For each date after the initial lookback window, compute
+        # each asset's historical volatility and assign weights
+        for i in range(self.lookback + 1, len(df)):
+            R_n = df_returns.copy()[assets].iloc[i - self.lookback : i]
 
+            # Compute standard deviation (volatility) for each asset
+            sigma = R_n.std().values
+
+            # Avoid division by zero / handle zero volatility by treating
+            # those entries as NaN first
+            sigma = np.where(sigma == 0, np.nan, sigma)
+
+            # Inverse volatility
+            inv_sigma = 1.0 / sigma
+
+            # If all volatilities are zero/NaN, fall back to equal weights
+            if np.all(np.isnan(inv_sigma)):
+                weights = np.repeat(1.0 / len(assets), len(assets))
+            else:
+                # Replace NaN/inf with 0 for normalization
+                inv_sigma = np.nan_to_num(inv_sigma, nan=0.0, posinf=0.0, neginf=0.0)
+                total = inv_sigma.sum()
+                if total == 0:
+                    # Fallback to equal weights if sum is zero
+                    weights = np.repeat(1.0 / len(assets), len(assets))
+                else:
+                    weights = inv_sigma / total
+
+            # Assign weights for this date
+            self.portfolio_weights.loc[df.index[i], assets] = weights
+
+        # Ensure excluded asset has zero weight
+        if self.exclude in self.portfolio_weights.columns:
+            self.portfolio_weights[self.exclude] = 0.0
         """
         TODO: Complete Task 2 Above
         """
@@ -187,12 +237,27 @@ class MeanVariancePortfolio:
                 """
                 TODO: Complete Task 3 Below
                 """
+                # Mean-Variance Optimization
+                # Decision variables: weights w_i >= 0
+                # Constraint: sum(w) == 1 (fully invested, long-only)
+                # Objective: maximize w^T mu - 0.5 * gamma * w^T Sigma w
+                # Note: Gurobi supports quadratic objectives; we build the
+                # objective using numpy arrays and MVar expressions.
 
-                # Sample Code: Initialize Decision w and the Objective
-                # NOTE: You can modify the following code
-                w = model.addMVar(n, name="w", ub=1)
-                model.setObjective(w.sum(), gp.GRB.MAXIMIZE)
+                # Initialize decision variables with bounds [0,1]
+                w = model.addMVar(n, name="w", lb=0.0, ub=1.0)
 
+                # Budget constraint: fully invested
+                model.addConstr(w.sum() == 1.0, name="budget")
+
+                # Linear term: mu^T w
+                linear_term = mu @ w
+
+                # Quadratic term: w^T Sigma w
+                quad_term = w @ (Sigma @ w)
+
+                # Set objective (maximize expected return minus risk penalty)
+                model.setObjective(linear_term - 0.5 * gamma * quad_term, gp.GRB.MAXIMIZE)
                 """
                 TODO: Complete Task 3 Above
                 """
